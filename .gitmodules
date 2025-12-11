@@ -1,0 +1,3 @@
+[submodule "liveness-sdk"]
+	path = liveness-sdk
+	url = https://github.com/nunutech40/android-liveness-sdk
