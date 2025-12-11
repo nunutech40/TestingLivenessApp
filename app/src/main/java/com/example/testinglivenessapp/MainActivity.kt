@@ -11,6 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import com.komerce.liveness.LivenessFactory
+import com.komerce.liveness.api.LivenessConfig
 import com.komerce.liveness.api.LivenessDetector
 import com.komerce.liveness.api.LivenessStep
 import com.komerce.liveness.api.LivenessResult
@@ -28,12 +29,15 @@ class MainActivity : AppCompatActivity() {
         LivenessFactory.create(this)
     }
 
-    // --- 1. SETUP SKENARIO (CONFIG) DI SINI ---
-    // Enak dibaca: Kita mau urutannya Kiri -> Kanan -> Senyum
-    private val livenessScenario = listOf(
-        LivenessStep.LOOK_LEFT,
-        LivenessStep.LOOK_RIGHT,
-        LivenessStep.SMILE
+    // --- 1. SETUP CONFIGURATION (CLEAN PATTERN) ---
+    // Semua settingan Liveness diatur di satu objek ini.
+    private val myLivenessConfig = LivenessConfig(
+        steps = listOf(
+            LivenessStep.LOOK_LEFT,
+            LivenessStep.LOOK_RIGHT,
+            LivenessStep.SMILE
+        ),
+        isAuditMode = true // Set 'true' kalau mau simpan foto tiap step, 'false' kalau cuma foto akhir
     )
 
     // Permission Launcher
@@ -49,7 +53,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         setupUI()
 
-        // Bind SDK (Wajib)
+        // Bind SDK (Wajib dipanggil di onCreate)
         livenessDetector.bind(this, cameraPreview)
     }
 
@@ -71,8 +75,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Memisahkan "Teks Instruksi" dari "Logic SDK".
-    // Kalau mau ganti kata-kata, cukup ganti di sini, gak usah ngudek-ngudek startDetection.
+    // Helper: Mapping Text UI
     private fun getInstructionText(step: LivenessStep): String {
         return when (step) {
             LivenessStep.LOOK_LEFT -> "Mohon Tengok KIRI ⬅️"
@@ -83,26 +86,28 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- 3. EKSEKUSI (CLEAN VERSION) ---
+    // --- 2. EKSEKUSI (MENGGUNAKAN CONFIG) ---
     private fun startLivenessProcess() {
-        // UI Preparation
+        // Disable tombol biar gak di-spam
         btnStart.isEnabled = false
 
-        // Ambil instruksi pertama dari skenario
-        val firstStep = livenessScenario.first()
-        tvInstruction.text = getInstructionText(firstStep)
+        // Ambil instruksi pertama dari Config
+        val steps = myLivenessConfig.steps
+        if (steps.isNotEmpty()) {
+            tvInstruction.text = getInstructionText(steps.first())
+        }
 
-        // START SDK
+        // START SDK (Sekarang cuma butuh lempar config object)
         livenessDetector.startDetection(
-            challenges = livenessScenario, // Inject Skenario
+            config = myLivenessConfig,
 
             onStepSuccess = { completedStep ->
-                // Cari step selanjutnya apa
-                val nextStepIndex = livenessScenario.indexOf(completedStep) + 1
-                if (nextStepIndex < livenessScenario.size) {
-                    val nextStep = livenessScenario[nextStepIndex]
+                // Cari step selanjutnya
+                val nextStepIndex = steps.indexOf(completedStep) + 1
 
-                    // Update UI di Main Thread
+                if (nextStepIndex < steps.size) {
+                    val nextStep = steps[nextStepIndex]
+                    // Update UI (Wajib runOnUiThread karena callback dari background)
                     runOnUiThread {
                         tvInstruction.text = getInstructionText(nextStep)
                     }
@@ -112,7 +117,8 @@ class MainActivity : AppCompatActivity() {
             },
 
             onStepError = { error ->
-                // Optional: Handle error UI per frame (misal: "Wajah Hilang!")
+                // Optional: Handle error UI per frame (misal: kasih toast atau text merah)
+                // Log.e("Liveness", "Error: $error")
             },
 
             onComplete = { result ->
@@ -125,11 +131,17 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             btnStart.isEnabled = true
             if (result.isSuccess) {
-                // Tampilkan sukses + jumlah foto bukti
-                tvInstruction.text = "VERIFIKASI SUKSES! ✅\nBukti: ${result.evidencePhotos.size} Foto"
+                // Sukses! Cek mode apa yang dipakai
+                if (myLivenessConfig.isAuditMode) {
+                    // Mode Audit: Ada banyak foto bukti
+                    val buktiCount = result.stepEvidence.size
+                    tvInstruction.text = "VERIFIKASI SUKSES (AUDIT)! ✅\nDapat $buktiCount Foto Bukti + 1 Selfie Lurus"
+                } else {
+                    // Mode Standard: Cuma 1 foto
+                    tvInstruction.text = "VERIFIKASI SUKSES (STD)! ✅\nDapat 1 Foto Selfie Lurus"
+                }
 
-                // Contoh: Akses foto senyum
-                // val smilePhoto = result.evidencePhotos[LivenessStep.SMILE]
+                // Note: Foto ada di result.totalBitmap
             } else {
                 tvInstruction.text = "Verifikasi Gagal ❌"
             }
