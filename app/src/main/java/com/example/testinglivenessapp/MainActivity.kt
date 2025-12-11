@@ -8,45 +8,55 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.camera.view.PreviewView
-
+import androidx.core.content.ContextCompat
 import com.komerce.liveness.LivenessFactory
 import com.komerce.liveness.api.LivenessDetector
 import com.komerce.liveness.api.LivenessStep
+import com.komerce.liveness.api.LivenessResult
+import com.komerce.liveness.api.LivenessError
 
 class MainActivity : AppCompatActivity() {
 
-    // Definisikan tipe UI Component biar gak bingung
+    // UI Components
     private lateinit var cameraPreview: PreviewView
     private lateinit var tvInstruction: TextView
     private lateinit var btnStart: Button
 
-    // Tambahin ": LivenessDetector" biar jelas tipenya
+    // SDK Instance
     private val livenessDetector: LivenessDetector by lazy {
         LivenessFactory.create(this)
     }
 
+    // --- 1. SETUP SKENARIO (CONFIG) DI SINI ---
+    // Enak dibaca: Kita mau urutannya Kiri -> Kanan -> Senyum
+    private val livenessScenario = listOf(
+        LivenessStep.LOOK_LEFT,
+        LivenessStep.LOOK_RIGHT,
+        LivenessStep.SMILE
+    )
+
+    // Permission Launcher
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        if (isGranted) {
-            startLivenessProcess()
-        } else {
-            Toast.makeText(this, "Perlu ijin kamera!", Toast.LENGTH_SHORT).show()
-        }
+        if (isGranted) startLivenessProcess()
+        else Toast.makeText(this, "Butuh ijin kamera bos!", Toast.LENGTH_SHORT).show()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        setupUI()
 
-        // Casting Explicit biar error "Cannot infer type" hilang
-        cameraPreview = findViewById<PreviewView>(R.id.cameraPreview)
-        tvInstruction = findViewById<TextView>(R.id.tvInstruction)
-        btnStart = findViewById<Button>(R.id.btnStart)
-
+        // Bind SDK (Wajib)
         livenessDetector.bind(this, cameraPreview)
+    }
+
+    private fun setupUI() {
+        cameraPreview = findViewById(R.id.cameraPreview)
+        tvInstruction = findViewById(R.id.tvInstruction)
+        btnStart = findViewById(R.id.btnStart)
 
         btnStart.setOnClickListener {
             checkPermissionAndStart()
@@ -54,50 +64,75 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkPermissionAndStart() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-            == PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startLivenessProcess()
         } else {
             requestPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
 
+    // Memisahkan "Teks Instruksi" dari "Logic SDK".
+    // Kalau mau ganti kata-kata, cukup ganti di sini, gak usah ngudek-ngudek startDetection.
+    private fun getInstructionText(step: LivenessStep): String {
+        return when (step) {
+            LivenessStep.LOOK_LEFT -> "Mohon Tengok KIRI ⬅️"
+            LivenessStep.LOOK_RIGHT -> "Sekarang Tengok KANAN ➡️"
+            LivenessStep.SMILE -> "Terakhir, SENYUM Lebar! 😁"
+            LivenessStep.BLINK -> "Coba Kedipkan Mata 😉"
+            else -> "Processing..."
+        }
+    }
+
+    // --- 3. EKSEKUSI (CLEAN VERSION) ---
     private fun startLivenessProcess() {
+        // UI Preparation
         btnStart.isEnabled = false
 
-        val challenges = listOf(
-            LivenessStep.LOOK_LEFT,
-            LivenessStep.LOOK_RIGHT,
-            LivenessStep.SMILE
-        )
+        // Ambil instruksi pertama dari skenario
+        val firstStep = livenessScenario.first()
+        tvInstruction.text = getInstructionText(firstStep)
 
-        tvInstruction.text = "Mohon Tengok KIRI"
-
+        // START SDK
         livenessDetector.startDetection(
-            challenges = challenges,
-            onStepSuccess = { step ->
-                runOnUiThread {
-                    val nextText = when(step) {
-                        LivenessStep.LOOK_LEFT -> "Mantap! Sekarang Tengok KANAN"
-                        LivenessStep.LOOK_RIGHT -> "Oke, Sekarang SENYUM :)"
-                        LivenessStep.SMILE -> "Tahan..."
-                        else -> "Lanjut..."
+            challenges = livenessScenario, // Inject Skenario
+
+            onStepSuccess = { completedStep ->
+                // Cari step selanjutnya apa
+                val nextStepIndex = livenessScenario.indexOf(completedStep) + 1
+                if (nextStepIndex < livenessScenario.size) {
+                    val nextStep = livenessScenario[nextStepIndex]
+
+                    // Update UI di Main Thread
+                    runOnUiThread {
+                        tvInstruction.text = getInstructionText(nextStep)
                     }
-                    tvInstruction.text = nextText
+                } else {
+                    runOnUiThread { tvInstruction.text = "Mengambil Foto..." }
                 }
             },
-            onStepError = { },
+
+            onStepError = { error ->
+                // Optional: Handle error UI per frame (misal: "Wajah Hilang!")
+            },
+
             onComplete = { result ->
-                runOnUiThread {
-                    val message = if (result.isSuccess) {
-                        "SUKSES! Dapat ${result.evidencePhotos.size} Foto."
-                    } else {
-                        "GAGAL!"
-                    }
-                    tvInstruction.text = message
-                    btnStart.isEnabled = true
-                }
+                handleResult(result)
             }
         )
+    }
+
+    private fun handleResult(result: LivenessResult) {
+        runOnUiThread {
+            btnStart.isEnabled = true
+            if (result.isSuccess) {
+                // Tampilkan sukses + jumlah foto bukti
+                tvInstruction.text = "VERIFIKASI SUKSES! ✅\nBukti: ${result.evidencePhotos.size} Foto"
+
+                // Contoh: Akses foto senyum
+                // val smilePhoto = result.evidencePhotos[LivenessStep.SMILE]
+            } else {
+                tvInstruction.text = "Verifikasi Gagal ❌"
+            }
+        }
     }
 }
