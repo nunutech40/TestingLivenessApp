@@ -39,8 +39,8 @@ dependencies {
     implementation libs.androidx.activity
     implementation libs.androidx.constraintlayout
 
-    // sdk local
-    implementation project(':liveness-sdk')
+    // sdk from jitpack
+    implementation libs.liveness.sdk
 
     def camerax_version = "1.3.0"
     implementation "androidx.camera:camera-view:${camerax_version}"
